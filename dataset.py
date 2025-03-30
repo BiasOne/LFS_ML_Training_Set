@@ -244,16 +244,6 @@ def main():
             trend_type, spike_day, trend_start_day, access_counts, obj_type, size
         )
 
-        # Simulate time since last access in seconds (TODO: Need to come up with something better because this doesnt really line up well with the rest of the data)
-        seconds_per_day = 24*60*60
-        time_since_last_access = 0
-        if trend_type == "viral_spike" or trend_type == "gradual_increase":
-             # Accessed more recently if trending
-            if np.random.random() < 0.3: time_since_last_access = np.random.randint(0, 2 * 60 * 60) # Within 2 hours
-            else: time_since_last_access = np.random.randint(2 * 60 * 60, seconds_per_day) # Within last day
-        else: # Stagnant objects last accessed longer ago (1-30 days)
-            time_since_last_access = np.random.randint(seconds_per_day, 30 * seconds_per_day)
-
         # Calculate summary statistics/features
         features = calculate_object_stats(access_counts) # Using renamed func
 
@@ -274,7 +264,6 @@ def main():
             size,
             obj_type,
             object_age,
-            time_since_last_access,
             social_trend_score,
             spike_day if spike_day is not None else -1,
             trend_start_day if trend_start_day is not None else -1,
@@ -302,7 +291,6 @@ def main():
         "size_MB",
         "object_type",
         "object_age_days",
-        "time_since_last_access",
         "social_trend_score",
         "spike_day",
         "trend_start_day",
