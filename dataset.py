@@ -1,6 +1,5 @@
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
 
 np.random.seed(42) # For reproducible results
 
@@ -215,21 +214,21 @@ def calculate_latency_impact(obj_type, views):
 # Estimate cost based on days spent in specific storage tiers, cost of moving data between tiers and cost of serving high-demand content from innapropriate storage tiers
 def cost_function(days_in_hot, days_in_cold, views_hot, views_cold, size_mb, optimal_promotion_day):
     # Google Cloud Storage pricing constants from the table
-    cost_hot_per_gb_month = 0.015      # Nearline: $0.015/GB/month
-    cost_cold_per_gb_month = 0.007     # Coldline: $0.007/GB/month
-    get_cost_hot_per_1000 = 0.001      # $0.001 per 1000 GET operations in Hot
-    get_cost_cold_per_1000 = 0.01      # $0.01 per 1000 GET operations in Cold
-    put_cost_hot_per_1000 = 0.01       # $0.01 per 1000 PUT operations in Hot
-    data_retrieval_hot_per_gb = 0.01   # $0.01/GB in Hot
-    data_retrieval_cold_per_gb = 0.02  # $0.02/GB in Cold
-    network_usage_per_gb = 0.12        # $0.12/GB for both tiers
+    cost_hot_per_gb_month = 0.015     
+    cost_cold_per_gb_month = 0.007    
+    get_cost_hot_per_1000 = 0.001     
+    get_cost_cold_per_1000 = 0.01     
+    put_cost_hot_per_1000 = 0.01      
+    data_retrieval_hot_per_gb = 0.01  
+    data_retrieval_cold_per_gb = 0.02 
+    network_usage_per_gb = 0.12       
     
     # Convert to daily rates
     days_in_month = 30  # Average month length
     cost_hot_per_gb_day = cost_hot_per_gb_month / days_in_month
     cost_cold_per_gb_day = cost_cold_per_gb_month / days_in_month
             
-    # Convert size from MB to GB
+    # MB to GB
     size_gb = size_mb / 1000
     
     # Calculate transition cost when moving between tiers (only if promotion occurs)
@@ -259,7 +258,8 @@ def cost_function(days_in_hot, days_in_cold, views_hot, views_cold, size_mb, opt
     total_access_cost_hot = get_cost_hot + retrieval_cost_hot + network_cost_hot
     total_access_cost_cold = get_cost_cold + retrieval_cost_cold + network_cost_cold
     total_storage_cost = storage_cost_hot + storage_cost_cold
-    total_cost_with_tiering = total_storage_cost + total_access_cost_hot + total_access_cost_cold  + transition_cost
+    total_cost_with_tiering = total_storage_cost + total_access_cost_hot + total_access_cost_cold
+    total_cost_with_tiering_transition_cost = total_storage_cost + total_access_cost_hot + total_access_cost_cold  + transition_cost
     
     # Calculate costs for static tiers (no transitions) for comparison
     days_to_simulate = days_in_hot + days_in_cold
@@ -288,6 +288,7 @@ def cost_function(days_in_hot, days_in_cold, views_hot, views_cold, size_mb, opt
         "access_cost_cold": total_access_cost_cold,
         "total_storage_cost": total_storage_cost,
         "total_cost_with_tiering": total_cost_with_tiering,
+        "total_cost_with_tiering_transition_cost":total_cost_with_tiering_transition_cost,
         
         # Static storage comparisons
         "static_hot_storage_cost": static_hot_storage_cost,
@@ -313,7 +314,7 @@ def main():
     days_to_simulate = 90
 
     for i in range(num_samples): # Main loop for generating samples
-        object_id = f"obj_{i}"
+        object_id = f"{i}"
         obj_type = np.random.choice(object_types)
 
         # Assign size based on object type (MB)
@@ -322,8 +323,6 @@ def main():
         elif obj_type == 'music': size = np.random.randint(2, 7)
         elif obj_type == 'document': size = np.random.randint(1, 2)
         elif obj_type == 'image': size = np.random.randint(1, 4)
-
-        object_age = np.random.randint(30, 181) # Simulate age 1-6 months
 
         # Adjust trend probability based on type (videos/music more likely viral)
         if obj_type in ["video", "music"]: trend_probs = [0.3, 0.4, 0.3] # stagnant, gradual, viral
@@ -370,7 +369,6 @@ def main():
             features["total_views"],
             size,
             obj_type,
-            object_age,
             social_trend_score,
             spike_day if spike_day is not None else -1,
             trend_start_day if trend_start_day is not None else -1,
@@ -400,6 +398,7 @@ def main():
             economic_analysis["access_cost_cold"],
             economic_analysis["total_storage_cost"],
             economic_analysis["total_cost_with_tiering"],
+            economic_analysis["total_cost_with_tiering_transition_cost"],
             economic_analysis["static_hot_storage_cost"],
             economic_analysis["static_hot_access_cost"],
             economic_analysis["total_cost_hot_static"],  
@@ -422,7 +421,6 @@ def main():
         "total_views",
         "size_MB",
         "object_type",
-        "object_age_days",
         "social_trend_score",
         "spike_day",
         "trend_start_day",
@@ -452,7 +450,7 @@ def main():
         columns.append(x)
 
     for key in economic_analysis.keys():
-        columns.append(str(key))
+        columns.append(f"{key}")
 
         
     df = pd.DataFrame(data, columns=columns)

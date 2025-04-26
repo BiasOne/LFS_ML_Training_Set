@@ -124,7 +124,7 @@ def plot_regression_results(y_test, predictions, model_names):
 
 
 def main():    
-    # df = pd.read_csv('D:/Projects/File_systems/code/training_dataset.csv')
+    # df = pd.read_csv('D:/Projects/File_systems/code/training_dataset_viral_only.csv')
     df = pd.read_csv('D:/Projects/File_systems/code/training_dataset.csv')
     y = df['optimal_promotion_day']
     x = df.drop(['object_id', 'object_type', 'days_until_optimal_promotion', 'spike_day', 'trend_start_day', 'optimal_promotion_day' ], axis=1)
