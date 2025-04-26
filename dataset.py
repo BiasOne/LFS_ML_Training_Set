@@ -161,7 +161,7 @@ def determine_optimal_promotion_day(trend_type, spike_day, trend_start_day, acce
     base_threshold = 500 # Base daily views needed to consider promotion (TODO: Maybe this should depend on the obj type?)
 
     # Adjust threshold based on latency sensitivity (less sensitive types need more views)
-    min_views_threshold = base_threshold / max(0.1, latency_sensitivity.get(obj_type, 0.6))
+    min_views_threshold = base_threshold / max(0.1, latency_sensitivity.get(obj_type))
 
     # Adjust threshold by size (larger files need more views to justify cost/effort)
     if obj_size > 1000: min_views_threshold *= 1.5 # >1GB
@@ -186,7 +186,7 @@ def determine_optimal_promotion_day(trend_type, spike_day, trend_start_day, acce
         # Promote latency-sensitive types 1 day before spike
         if obj_type in ['video', 'music']: return max(0, spike_day - 1)
         else: # For others, decide based on sensitivity
-             if latency_sensitivity.get(obj_type, 0.6) < 0.5: return spike_day # Promote on spike day if not sensitive
+             if latency_sensitivity.get(obj_type) < 0.5: return spike_day # Promote on spike day if not sensitive
              else: return max(0, spike_day - 1) # Else promote day before
 
     if trend_type == "gradual_increase" and trend_start_day is not None:
@@ -197,7 +197,7 @@ def determine_optimal_promotion_day(trend_type, spike_day, trend_start_day, acce
         for day in range(trend_start_day, len(access_pattern)):
             if access_pattern[day] >= min_views_threshold:
                 # Promote sensitive types 1 day early, others on the day
-                if latency_sensitivity.get(obj_type, 0.6) > 0.7: return max(0, day - 1)
+                if latency_sensitivity.get(obj_type) > 0.7: return max(0, day - 1)
                 else: return day
         return -1 # Trend started but never crossed threshold after start_day
 
@@ -208,14 +208,57 @@ def calculate_latency_impact(obj_type, views):
     latency_impact_factor = {
         'video': 0.9, 'music': 0.8, 'document': 0.3, 'image': 0.4
     }
-    impact_score = views * latency_impact_factor.get(obj_type, 0.6) # Higher score = higher impact
+    impact_score = views * latency_impact_factor.get(obj_type) # Higher score = higher impact
     return impact_score
+
+# Estimate cost based on days spent in specific storage tiers, cost of moving data between tiers and cost of serving high-demand content from innapropriate storage tiers
+def cost_function(days_in_hot, days_in_cold, views_hot, views_cold, size, cost_hot_per_mbyte_per_day, cost_cold_per_mbyte_per_day, days_to_simulate, optimal_promotion_day, obj_type):
+    latency_penalty = {
+        'video': 0.3, 'music': 0.1, 'document': 0.000001, 'image': 0.000001
+    }
+    latency_hot = 1 # seconds
+    latency_cold = 100   # seconds
+    cold_access_fee = 0.02 # per gb 
+    size = size / 1000
+    transition_cost = (size * .01) if optimal_promotion_day != -1 else 0
+
+    # Latency cost
+    latency_cost_hot =  views_hot * latency_hot * latency_penalty.get(obj_type) * size
+    access_cost_cold = views_cold * (cold_access_fee * size) 
+    latency_cost_cold = (views_cold * latency_cold * latency_penalty.get(obj_type) * size) + access_cost_cold
+
+    # Storage costs with promotion
+    storage_cost_hot = days_in_hot * cost_hot_per_mbyte_per_day * size
+    
+    storage_cost_cold = days_in_cold * cost_cold_per_mbyte_per_day * size
+
+    # Static latency cost assuming no transitions
+    total_views = views_hot + views_cold
+    latency_cost_hot_static =  total_views * latency_hot * latency_penalty.get(obj_type) * size
+    access_cost_cold = total_views * (cold_access_fee * size) 
+    latency_cost_cold_static = (total_views * latency_cold * latency_penalty.get(obj_type) * size) + access_cost_cold
+
+    # Storage costs with no storage tier promotion
+    storage_cost_hot_static = days_to_simulate * cost_hot_per_mbyte_per_day * size
+    storage_cost_cold_static = days_to_simulate * cost_cold_per_mbyte_per_day * size
+
+    # Total cost (combining access + storage + transition)
+    total_cost_with_latency = latency_cost_hot + latency_cost_cold + storage_cost_hot + storage_cost_cold + transition_cost
+    total_storage_cost = storage_cost_hot + storage_cost_cold + transition_cost
+    total_cost_hot_static = storage_cost_hot_static + latency_cost_hot_static
+    total_cost_cold_static = storage_cost_cold_static + latency_cost_cold_static
+    
+    return storage_cost_hot, storage_cost_cold, latency_cost_hot, latency_cost_cold, total_cost_with_latency, total_storage_cost, storage_cost_hot_static, latency_cost_hot_static,  total_cost_hot_static, storage_cost_cold_static, latency_cost_cold_static, total_cost_cold_static
 
 def main():
     data = [] # List to hold data rows
 
     num_samples = 1000
-    days_to_simulate = 30
+    # Should be intervals of 30 days
+    days_to_simulate = 90
+
+    cost_cold_per_mbyte_per_day = 1
+    cost_hot_per_mbyte_per_day = 100
 
     for i in range(num_samples): # Main loop for generating samples
         object_id = f"obj_{i}"
@@ -244,12 +287,17 @@ def main():
             trend_type, spike_day, trend_start_day, access_counts, obj_type, size
         )
 
+        # Determine views while in cold storage
+        views_cold = sum([x for x in access_counts.tolist()[:optimal_promotion_day]] if optimal_promotion_day != -1 else access_counts.tolist())
+
+        # Determine views while in hot storage
+        views_hot = sum([x for x in access_counts.tolist()[optimal_promotion_day:]] if optimal_promotion_day != -1 else [0])
+
         # Calculate summary statistics/features
-        features = calculate_object_stats(access_counts) # Using renamed func
+        features = calculate_object_stats(access_counts)
 
         # Calculate simulated social score
-        social_trend_score = generate_social_trend_score(
-            trend_type, access_counts, obj_type)
+        social_trend_score = generate_social_trend_score(trend_type, access_counts, obj_type)
 
         # Derive days until promotion from optimal day
         days_until_optimal_promotion = optimal_promotion_day # -1 if never
@@ -257,6 +305,16 @@ def main():
         # Calculate pre/post spike averages
         spike_features = calculate_pre_spike_features(access_counts, spike_day)
 
+        # Calculate days in cold storage
+        days_in_cold = (optimal_promotion_day - 1) if optimal_promotion_day != -1 else days_to_simulate
+
+        # Calculate days in hot storage
+        days_in_hot = (days_to_simulate - optimal_promotion_day + 1) if optimal_promotion_day != -1 else 0
+
+        # Calcualte total cost for dynamic storage and cost with penatly for not promoting storage tier
+        storage_cost_hot, storage_cost_cold, latency_cost_hot, latency_cost_cold, total_cost_with_latency, total_storage_cost, storage_cost_hot_static, latency_cost_hot_static, total_cost_hot_static, storage_cost_cold_static, latency_cost_cold_static, total_cost_cold_static = cost_function(
+            days_in_hot, days_in_cold, views_hot, views_cold, size, cost_hot_per_mbyte_per_day, cost_cold_per_mbyte_per_day, days_to_simulate, optimal_promotion_day, obj_type)
+        
         # Assemble the data row
         row_data = [
             object_id,
@@ -281,6 +339,27 @@ def main():
 
         # Add daily access counts to the end of the row
         row_data.extend(access_counts.tolist())
+        temp = [
+            days_in_cold,
+            views_cold,
+            storage_cost_cold,
+            latency_cost_cold,            
+            days_in_hot,
+            views_hot,
+            storage_cost_hot,            
+            latency_cost_hot,
+            total_cost_with_latency,
+            total_storage_cost,
+            storage_cost_cold_static,
+            latency_cost_cold_static,
+            total_cost_cold_static,            
+            storage_cost_hot_static,
+            latency_cost_hot_static,
+            total_cost_hot_static,
+        ] 
+        for x in temp:
+            row_data.append(x)
+    
 
         data.append(row_data) # Add row to dataset list
 
@@ -309,10 +388,31 @@ def main():
     # Add headers for daily view columns
     for day in range(days_to_simulate):
         columns.append(f"day_{day}_views")
-
+    
+    temp = [
+            'days_in_cold',
+            'views_cold',
+            'storage_cost_cold',
+            'latency_cost_cold',            
+            'days_in_hot',
+            'views_hot',
+            'storage_cost_hot',            
+            'latency_cost_hot',
+            'total_cost_with_latency',
+            'total_storage_cost',
+            'storage_cost_cold_static',
+            'latency_cost_cold_static',
+            'total_cost_cold_static',            
+            'storage_cost_hot_static',
+            'latency_cost_hot_static',
+            'total_cost_hot_static',
+        ]
+    for x in temp:
+        columns.append(x)  
+        
     df = pd.DataFrame(data, columns=columns)
 
-    file_path = "training_dataset.csv"
+    file_path = "training_dataset_v2.csv"
     df.to_csv(file_path, index=False)
 
 if __name__ == '__main__':
