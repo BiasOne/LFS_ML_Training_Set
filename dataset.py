@@ -1,5 +1,6 @@
 import pandas as pd
 import numpy as np
+import matplotlib.pyplot as plt
 
 np.random.seed(42) # For reproducible results
 
@@ -158,14 +159,14 @@ def determine_optimal_promotion_day(trend_type, spike_day, trend_start_day, acce
         'video': 0.9, 'music': 0.8, 'document': 0.3, 'image': 0.4
     }
 
-    base_threshold = 500 # Base daily views needed to consider promotion (TODO: Maybe this should depend on the obj type?)
+    base_threshold = 10 # Base daily views needed to consider promotion (TODO: Maybe this should depend on the obj type?)
 
     # Adjust threshold based on latency sensitivity (less sensitive types need more views)
     min_views_threshold = base_threshold / max(0.1, latency_sensitivity.get(obj_type))
 
-    # Adjust threshold by size (larger files need more views to justify cost/effort)
-    if obj_size > 1000: min_views_threshold *= 1.5 # >1GB
-    elif obj_size < 10: min_views_threshold *= 0.5 # <10MB
+    # Adjust threshold by size (larger files need less views to justify cost/effort)
+    if obj_size > 5: min_views_threshold *= .25 # > 5mb
+    elif obj_size < 5: min_views_threshold *= 1.5 # < 5MB
 
     # Determine promotion day based on trend type and thresholds
 
@@ -212,43 +213,97 @@ def calculate_latency_impact(obj_type, views):
     return impact_score
 
 # Estimate cost based on days spent in specific storage tiers, cost of moving data between tiers and cost of serving high-demand content from innapropriate storage tiers
-def cost_function(days_in_hot, days_in_cold, views_hot, views_cold, size, cost_hot_per_mbyte_per_day, cost_cold_per_mbyte_per_day, days_to_simulate, optimal_promotion_day, obj_type):
-    latency_penalty = {
-        'video': 0.3, 'music': 0.1, 'document': 0.000001, 'image': 0.000001
-    }
-    latency_hot = 1 # seconds
-    latency_cold = 100   # seconds
-    cold_access_fee = 0.02 # per gb 
-    size = size / 1000
-    transition_cost = (size * .01) if optimal_promotion_day != -1 else 0
-
-    # Latency cost
-    latency_cost_hot =  views_hot * latency_hot * latency_penalty.get(obj_type) * size
-    access_cost_cold = views_cold * (cold_access_fee * size) 
-    latency_cost_cold = (views_cold * latency_cold * latency_penalty.get(obj_type) * size) + access_cost_cold
-
-    # Storage costs with promotion
-    storage_cost_hot = days_in_hot * cost_hot_per_mbyte_per_day * size
+def cost_function(days_in_hot, days_in_cold, views_hot, views_cold, size_mb, optimal_promotion_day):
+    # Google Cloud Storage pricing constants from the table
+    cost_hot_per_gb_month = 0.015      # Nearline: $0.015/GB/month
+    cost_cold_per_gb_month = 0.007     # Coldline: $0.007/GB/month
+    get_cost_hot_per_1000 = 0.001      # $0.001 per 1000 GET operations in Hot
+    get_cost_cold_per_1000 = 0.01      # $0.01 per 1000 GET operations in Cold
+    put_cost_hot_per_1000 = 0.01       # $0.01 per 1000 PUT operations in Hot
+    data_retrieval_hot_per_gb = 0.01   # $0.01/GB in Hot
+    data_retrieval_cold_per_gb = 0.02  # $0.02/GB in Cold
+    network_usage_per_gb = 0.12        # $0.12/GB for both tiers
     
-    storage_cost_cold = days_in_cold * cost_cold_per_mbyte_per_day * size
-
-    # Static latency cost assuming no transitions
+    # Convert to daily rates
+    days_in_month = 30  # Average month length
+    cost_hot_per_gb_day = cost_hot_per_gb_month / days_in_month
+    cost_cold_per_gb_day = cost_cold_per_gb_month / days_in_month
+            
+    # Convert size from MB to GB
+    size_gb = size_mb / 1000
+    
+    # Calculate transition cost when moving between tiers (only if promotion occurs)
+    # Includes PUT operation cost and data retrieval cost
+    transition_cost = 0
+    if optimal_promotion_day != -1:
+        put_operations = 1  # Assume one PUT operation for the transition
+        transition_cost = (size_gb * data_retrieval_cold_per_gb) + (put_operations * put_cost_hot_per_1000 / 1000)
+    
+    # Calculate GET operation costs
+    get_cost_hot = (views_hot / 1000) * get_cost_hot_per_1000
+    get_cost_cold = (views_cold / 1000) * get_cost_cold_per_1000
+    
+    # Calculate data retrieval costs
+    retrieval_cost_hot = views_hot * size_gb * data_retrieval_hot_per_gb
+    retrieval_cost_cold = views_cold * size_gb * data_retrieval_cold_per_gb
+    
+    # Calculate network usage costs
+    network_cost_hot = views_hot * size_gb * network_usage_per_gb
+    network_cost_cold = views_cold * size_gb * network_usage_per_gb
+        
+    # Storage costs
+    storage_cost_hot = days_in_hot * cost_hot_per_gb_day * size_gb
+    storage_cost_cold = days_in_cold * cost_cold_per_gb_day * size_gb
+    
+    # Total costs with tier transition
+    total_access_cost_hot = get_cost_hot + retrieval_cost_hot + network_cost_hot
+    total_access_cost_cold = get_cost_cold + retrieval_cost_cold + network_cost_cold
+    total_storage_cost = storage_cost_hot + storage_cost_cold
+    total_cost_with_tiering = total_storage_cost + total_access_cost_hot + total_access_cost_cold  + transition_cost
+    
+    # Calculate costs for static tiers (no transitions) for comparison
+    days_to_simulate = days_in_hot + days_in_cold
     total_views = views_hot + views_cold
-    latency_cost_hot_static =  total_views * latency_hot * latency_penalty.get(obj_type) * size
-    access_cost_cold = total_views * (cold_access_fee * size) 
-    latency_cost_cold_static = (total_views * latency_cold * latency_penalty.get(obj_type) * size) + access_cost_cold
-
-    # Storage costs with no storage tier promotion
-    storage_cost_hot_static = days_to_simulate * cost_hot_per_mbyte_per_day * size
-    storage_cost_cold_static = days_to_simulate * cost_cold_per_mbyte_per_day * size
-
-    # Total cost (combining access + storage + transition)
-    total_cost_with_latency = latency_cost_hot + latency_cost_cold + storage_cost_hot + storage_cost_cold + transition_cost
-    total_storage_cost = storage_cost_hot + storage_cost_cold + transition_cost
-    total_cost_hot_static = storage_cost_hot_static + latency_cost_hot_static
-    total_cost_cold_static = storage_cost_cold_static + latency_cost_cold_static
     
-    return storage_cost_hot, storage_cost_cold, latency_cost_hot, latency_cost_cold, total_cost_with_latency, total_storage_cost, storage_cost_hot_static, latency_cost_hot_static,  total_cost_hot_static, storage_cost_cold_static, latency_cost_cold_static, total_cost_cold_static
+    # Static hot tier costs
+    static_hot_storage_cost = days_to_simulate * cost_hot_per_gb_day * size_gb
+    static_hot_get_cost = (total_views / 1000) * get_cost_hot_per_1000
+    static_hot_retrieval_cost = total_views * size_gb * data_retrieval_hot_per_gb
+    static_hot_network_cost = total_views * size_gb * network_usage_per_gb
+    total_cost_hot_static = static_hot_storage_cost + static_hot_get_cost + static_hot_retrieval_cost + static_hot_network_cost
+    
+    # Static cold tier costs
+    static_cold_storage_cost = days_to_simulate * cost_cold_per_gb_day * size_gb
+    static_cold_get_cost = (total_views / 1000) * get_cost_cold_per_1000
+    static_cold_retrieval_cost = total_views * size_gb * data_retrieval_cold_per_gb
+    static_cold_network_cost = total_views * size_gb * network_usage_per_gb
+    total_cost_cold_static = static_cold_storage_cost + static_cold_get_cost + static_cold_retrieval_cost + static_cold_network_cost
+    
+    return {
+        # Detailed cost breakdown for tiered storage
+        "storage_cost_hot": storage_cost_hot,
+        "storage_cost_cold": storage_cost_cold,
+        "transition_cost": transition_cost,
+        "access_cost_hot": total_access_cost_hot,
+        "access_cost_cold": total_access_cost_cold,
+        "total_storage_cost": total_storage_cost,
+        "total_cost_with_tiering": total_cost_with_tiering,
+        
+        # Static storage comparisons
+        "static_hot_storage_cost": static_hot_storage_cost,
+        "static_hot_access_cost": static_hot_get_cost + static_hot_retrieval_cost + static_hot_network_cost,
+        "total_cost_hot_static": total_cost_hot_static,
+        
+        "static_cold_storage_cost": static_cold_storage_cost,
+        "static_cold_access_cost": static_cold_get_cost + static_cold_retrieval_cost + static_cold_network_cost,
+        "total_cost_cold_static": total_cost_cold_static,
+        
+        # Savings calculations
+        "savings_vs_hot": total_cost_hot_static - total_cost_with_tiering,
+        "savings_vs_cold": total_cost_cold_static - total_cost_with_tiering,
+        "percent_savings_vs_hot": (total_cost_hot_static - total_cost_with_tiering) / total_cost_hot_static * 100 if total_cost_hot_static > 0 else 0,
+        "percent_savings_vs_cold": (total_cost_cold_static - total_cost_with_tiering) / total_cost_cold_static * 100 if total_cost_cold_static > 0 else 0
+    }
 
 def main():
     data = [] # List to hold data rows
@@ -256,9 +311,6 @@ def main():
     num_samples = 1000
     # Should be intervals of 30 days
     days_to_simulate = 90
-
-    cost_cold_per_mbyte_per_day = 1
-    cost_hot_per_mbyte_per_day = 100
 
     for i in range(num_samples): # Main loop for generating samples
         object_id = f"obj_{i}"
@@ -283,9 +335,7 @@ def main():
         access_counts, spike_day, trend_start_day = generate_access_pattern(trend_type, days_to_simulate)
 
         # Determine the target variable: optimal day for promotion
-        optimal_promotion_day = determine_optimal_promotion_day(
-            trend_type, spike_day, trend_start_day, access_counts, obj_type, size
-        )
+        optimal_promotion_day = determine_optimal_promotion_day(trend_type, spike_day, trend_start_day, access_counts, obj_type, size)
 
         # Determine views while in cold storage
         views_cold = sum([x for x in access_counts.tolist()[:optimal_promotion_day]] if optimal_promotion_day != -1 else access_counts.tolist())
@@ -312,8 +362,7 @@ def main():
         days_in_hot = (days_to_simulate - optimal_promotion_day + 1) if optimal_promotion_day != -1 else 0
 
         # Calcualte total cost for dynamic storage and cost with penatly for not promoting storage tier
-        storage_cost_hot, storage_cost_cold, latency_cost_hot, latency_cost_cold, total_cost_with_latency, total_storage_cost, storage_cost_hot_static, latency_cost_hot_static, total_cost_hot_static, storage_cost_cold_static, latency_cost_cold_static, total_cost_cold_static = cost_function(
-            days_in_hot, days_in_cold, views_hot, views_cold, size, cost_hot_per_mbyte_per_day, cost_cold_per_mbyte_per_day, days_to_simulate, optimal_promotion_day, obj_type)
+        economic_analysis = cost_function(days_in_hot, days_in_cold, views_hot, views_cold, size, optimal_promotion_day)
         
         # Assemble the data row
         row_data = [
@@ -341,26 +390,30 @@ def main():
         row_data.extend(access_counts.tolist())
         temp = [
             days_in_cold,
-            views_cold,
-            storage_cost_cold,
-            latency_cost_cold,            
+            views_cold,       
             days_in_hot,
             views_hot,
-            storage_cost_hot,            
-            latency_cost_hot,
-            total_cost_with_latency,
-            total_storage_cost,
-            storage_cost_cold_static,
-            latency_cost_cold_static,
-            total_cost_cold_static,            
-            storage_cost_hot_static,
-            latency_cost_hot_static,
-            total_cost_hot_static,
+            economic_analysis["storage_cost_hot"],
+            economic_analysis["storage_cost_cold"],
+            economic_analysis["transition_cost"],
+            economic_analysis["access_cost_hot"],
+            economic_analysis["access_cost_cold"],
+            economic_analysis["total_storage_cost"],
+            economic_analysis["total_cost_with_tiering"],
+            economic_analysis["static_hot_storage_cost"],
+            economic_analysis["static_hot_access_cost"],
+            economic_analysis["total_cost_hot_static"],  
+            economic_analysis["static_cold_storage_cost"],
+            economic_analysis["static_cold_access_cost"],
+            economic_analysis["total_cost_cold_static"],
+            economic_analysis["savings_vs_hot"],
+            economic_analysis["savings_vs_cold"],
+            economic_analysis["percent_savings_vs_hot"],
+            economic_analysis["percent_savings_vs_cold"]
         ] 
         for x in temp:
             row_data.append(x)
     
-
         data.append(row_data) # Add row to dataset list
 
     # Define column headers for the CSV
@@ -391,24 +444,16 @@ def main():
     
     temp = [
             'days_in_cold',
-            'views_cold',
-            'storage_cost_cold',
-            'latency_cost_cold',            
+            'views_cold',            
             'days_in_hot',
-            'views_hot',
-            'storage_cost_hot',            
-            'latency_cost_hot',
-            'total_cost_with_latency',
-            'total_storage_cost',
-            'storage_cost_cold_static',
-            'latency_cost_cold_static',
-            'total_cost_cold_static',            
-            'storage_cost_hot_static',
-            'latency_cost_hot_static',
-            'total_cost_hot_static',
+            'views_hot',        
         ]
     for x in temp:
-        columns.append(x)  
+        columns.append(x)
+
+    for key in economic_analysis.keys():
+        columns.append(str(key))
+
         
     df = pd.DataFrame(data, columns=columns)
 
