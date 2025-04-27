@@ -11,12 +11,14 @@ from sklearn.linear_model import LinearRegression
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.tree import DecisionTreeRegressor
 
-
+# Train and Test Linear Regression With Defaults
 def lin_reg(x_train, x_test, y_train, y_test):
     lr = LinearRegression()
     lr.fit(x_train, y_train)
     y_lr_train_pred = lr.predict(x_train)
     y_lr_test_pred = lr.predict(x_test)
+
+    # Calculate training set and test set metrics (MSE, MAE, R2 RMSE)
     lr_train_mse = mean_squared_error(y_train, y_lr_train_pred)
     lr_train_rmse = np.sqrt(lr_train_mse)
     lr_train_mae = mean_absolute_error(y_train, y_lr_train_pred)
@@ -28,12 +30,14 @@ def lin_reg(x_train, x_test, y_train, y_test):
     print_stats("Linear Regression", lr_train_mse, lr_train_rmse, lr_train_mae, lr_train_r2, lr_test_mse, lr_test_rmse, lr_test_mae, lr_test_r2)
     return y_lr_test_pred
 
+# Train and Test Random Forest With Defaults
 def rand_forest_reg(x_train, x_test, y_train, y_test):
     rfr = RandomForestRegressor()
     rfr.fit(x_train, y_train)
     y_rfr_train_pred = rfr.predict(x_train)
     y_rfr_test_pred = rfr.predict(x_test)
-    y_rfr_train_pred
+    
+    # Calculate training set and test set metrics (MSE, MAE, R2 RMSE)
     rfr_train_mse = mean_squared_error(y_train, y_rfr_train_pred)
     rfr_train_rmse = np.sqrt(rfr_train_mse)
     rfr_train_mae = mean_absolute_error(y_train, y_rfr_train_pred)
@@ -45,12 +49,14 @@ def rand_forest_reg(x_train, x_test, y_train, y_test):
     print_stats("Random Forest Regressor", rfr_train_mse, rfr_train_rmse, rfr_train_mae, rfr_train_r2, rfr_test_mse, rfr_test_rmse, rfr_test_mae, rfr_test_r2)
     return y_rfr_test_pred
 
+# Train and Test Decision Tree With Defaults
 def dec_tree_reg(x_train, x_test, y_train, y_test):
     dt = DecisionTreeRegressor()
     dt.fit(x_train, y_train)
     y_dt_train_pred = dt.predict(x_train)
     y_dt_test_pred = dt.predict(x_test)
-    y_dt_train_pred
+    
+    # Calculate training set and test set metrics (MSE, MAE, R2 RMSE)
     dt_train_mse = mean_squared_error(y_train, y_dt_train_pred)
     dt_train_rmse = np.sqrt(dt_train_mse)
     dt_train_mae = mean_absolute_error(y_train, y_dt_train_pred)
@@ -61,7 +67,8 @@ def dec_tree_reg(x_train, x_test, y_train, y_test):
     dt_test_r2 = r2_score(y_test, y_dt_test_pred)
     print_stats("Decision Tree Regressor", dt_train_mse, dt_train_rmse, dt_train_mae, dt_train_r2, dt_test_mse, dt_test_rmse, dt_test_mae, dt_test_r2)
     return y_dt_test_pred    
-    
+
+# Print Metrics   
 def print_stats(model, train_mse, train_rmse, train_mae, train_r2, test_mse, test_rmse, test_mae, test_r2):
     print(f"****** {model} ******")
     print(f"Training Set Mean Squared Error: {train_mse:.4f}")
@@ -74,6 +81,7 @@ def print_stats(model, train_mse, train_rmse, train_mae, train_r2, test_mse, tes
     print(f"Test Set R2: {test_r2:.4f}")
     print("-" * (len(model) + 14)) 
 
+# Plot Actual, Predicted and Residuals
 def plot_regression_results(y_test, predictions, model_names):
     plot_df = pd.DataFrame({
         'Actual': y_test.squeeze()
@@ -127,8 +135,37 @@ def main():
     # df = pd.read_csv('D:/Projects/File_systems/code/training_dataset_viral_only.csv')
     df = pd.read_csv('D:/Projects/File_systems/code/training_dataset.csv')
     y = df['optimal_promotion_day']
-    x = df.drop(['object_id', 'object_type', 'days_until_optimal_promotion', 'spike_day', 'trend_start_day', 'optimal_promotion_day' ], axis=1)
-    x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=0.2, random_state=100)    
+    x = df.drop(['object_id',
+                'object_type',
+                'days_until_optimal_promotion',
+                'spike_day',
+                'trend_start_day',
+                'optimal_promotion_day'
+                'days_in_cold',
+                'views_cold',  
+                'days_in_hot',
+                'views_hot',
+                'storage_cost_hot',
+                'storage_cost_cold',
+                'transition_cost',
+                'access_cost_hot',
+                'access_cost_cold',
+                'total_storage_cost',
+                'total_cost_with_tiering',
+                'total_cost_with_tiering_transition_cost'
+                'static_hot_storage_cost',
+                'static_hot_access_cost',
+                'total_cost_hot_static',  
+                'static_cold_storage_cost',
+                'static_cold_access_cost',
+                'total_cost_cold_static',
+                'savings_vs_hot',
+                'savings_vs_cold',
+                'percent_savings_vs_hot',
+                'percent_savings_vs_cold'], axis=1)
+    
+    # Split Dataset 70/30
+    x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=0.3, random_state=100)    
     lr_test_pred = lin_reg(x_train, x_test, y_train, y_test)
     rfr_test_pred = rand_forest_reg(x_train, x_test, y_train, y_test)
     dt_test_pred = dec_tree_reg(x_train, x_test, y_train, y_test)

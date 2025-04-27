@@ -72,7 +72,7 @@ def generate_access_pattern(trend_type, days):
         elif spike_day == days: # Handle edge case where spike is last day
             base[days-1] = max(base[days-1], spike_height)
 
-    # Simulate weekly seasonality (higher views on weekends)
+    # Simulate weekly seasonality (higher views on weekends) TODO: Expand for holidays at some point
     weekday_effect = np.array([1.0, 1.0, 1.0, 1.1, 1.2, 1.5, 1.3] * (days // 7 + 1))[:days]
     base = base * weekday_effect
 
@@ -89,7 +89,10 @@ def calculate_pre_spike_features(access_pattern, spike_day):
     pre_spike_avg = np.mean(access_pattern[:spike_day]) if spike_day > 0 else 0.0
     post_spike_avg = np.mean(access_pattern[spike_day:]) if spike_day < len(access_pattern) else 0.0
 
-    return {"pre_spike_avg": pre_spike_avg, "post_spike_avg": post_spike_avg}
+    return {
+        "pre_spike_avg": pre_spike_avg,
+        "post_spike_avg": post_spike_avg
+    }
 
 def calculate_object_stats(access_pattern):
     # Calculate summary stats from the access pattern
@@ -155,7 +158,10 @@ def generate_social_trend_score(trend_type, access_pattern, obj_type):
 def determine_optimal_promotion_day(trend_type, spike_day, trend_start_day, access_pattern, obj_type, obj_size):
     # How latency sensitive is this content type? (higher = more sensitive)
     latency_sensitivity = {
-        'video': 0.9, 'music': 0.8, 'document': 0.3, 'image': 0.4
+        'video': 0.9,
+        'music': 0.8,
+        'document': 0.3,
+        'image': 0.4
     }
 
     base_threshold = 10 # Base daily views needed to consider promotion (TODO: Maybe this should depend on the obj type?)
@@ -203,17 +209,9 @@ def determine_optimal_promotion_day(trend_type, spike_day, trend_start_day, acce
 
     return -1 # do not promote
 
-# Estimate user experience impact based on latency sensitivity and views
-def calculate_latency_impact(obj_type, views):
-    latency_impact_factor = {
-        'video': 0.9, 'music': 0.8, 'document': 0.3, 'image': 0.4
-    }
-    impact_score = views * latency_impact_factor.get(obj_type) # Higher score = higher impact
-    return impact_score
-
 # Estimate cost based on days spent in specific storage tiers, cost of moving data between tiers and cost of serving high-demand content from innapropriate storage tiers
 def cost_function(days_in_hot, days_in_cold, views_hot, views_cold, size_mb, optimal_promotion_day):
-    # Google Cloud Storage pricing constants from the table
+    # Google Cloud Storage pricing constants from table
     cost_hot_per_gb_month = 0.015     
     cost_cold_per_gb_month = 0.007    
     get_cost_hot_per_1000 = 0.001     
@@ -235,7 +233,7 @@ def cost_function(days_in_hot, days_in_cold, views_hot, views_cold, size_mb, opt
     # Includes PUT operation cost and data retrieval cost
     transition_cost = 0
     if optimal_promotion_day != -1:
-        put_operations = 1  # Assume one PUT operation for the transition
+        put_operations = 1  # Assume one PUT operation for the transition TODO: promotins and demotions based on access would increase PUTs
         transition_cost = (size_gb * data_retrieval_cold_per_gb) + (put_operations * put_cost_hot_per_1000 / 1000)
     
     # Calculate GET operation costs
@@ -293,8 +291,7 @@ def cost_function(days_in_hot, days_in_cold, views_hot, views_cold, size_mb, opt
         # Static storage comparisons
         "static_hot_storage_cost": static_hot_storage_cost,
         "static_hot_access_cost": static_hot_get_cost + static_hot_retrieval_cost + static_hot_network_cost,
-        "total_cost_hot_static": total_cost_hot_static,
-        
+        "total_cost_hot_static": total_cost_hot_static,        
         "static_cold_storage_cost": static_cold_storage_cost,
         "static_cold_access_cost": static_cold_get_cost + static_cold_retrieval_cost + static_cold_network_cost,
         "total_cost_cold_static": total_cost_cold_static,
@@ -452,7 +449,6 @@ def main():
     for key in economic_analysis.keys():
         columns.append(f"{key}")
 
-        
     df = pd.DataFrame(data, columns=columns)
 
     file_path = "training_dataset_v2.csv"
